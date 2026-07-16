@@ -1,0 +1,100 @@
+USE ROLE HEALTHCARE_CLAIMS_AI_ROLE;
+USE WAREHOUSE HEALTHCARE_CLAIMS_AI_WH;
+USE DATABASE HEALTHCARE_CLAIMS_AI_DB;
+USE SCHEMA CLAIMS;
+ /*============================================================
+   PATIENT_CLAIMS TABLE  
+   ============================================================ */ 
+
+CREATE OR REPLACE TABLE PATIENT_CLAIMS
+(
+    CLAIM_ID              VARCHAR DEFAULT UUID_STRING(),
+    PATIENT_ID            VARCHAR,
+    PATIENT_NAME          VARCHAR,
+    POLICY_NUMBER         VARCHAR,
+    CLAIM_TYPE            VARCHAR,
+    CLAIMED_AMOUNT        NUMBER(18,2),
+
+    CLAIM_STATUS          VARCHAR DEFAULT 'UPLOADED',
+    REVIEWER_DECISION     VARCHAR,
+    REVIEWER_COMMENTS     VARCHAR,
+
+    CREATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    REVIEWED_AT           TIMESTAMP_NTZ,
+
+    PRIMARY KEY (CLAIM_ID)
+);
+
+
+ /*============================================================
+   CLAIM_DOCUMENTS TABLE  
+   ============================================================ */ 
+
+   CREATE OR REPLACE TABLE CLAIM_DOCUMENTS
+(
+    DOCUMENT_ID           VARCHAR DEFAULT UUID_STRING(),
+    CLAIM_ID              VARCHAR,
+
+    FILE_NAME             VARCHAR,
+    RELATIVE_PATH         VARCHAR,
+    DOCUMENT_TYPE         VARCHAR,
+    TEMPLATE_ID           VARCHAR,
+
+    PROCESSING_STATUS     VARCHAR DEFAULT 'UPLOADED',
+    ERROR_MESSAGE         VARCHAR,
+
+    UPLOADED_AT           TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PROCESSED_AT          TIMESTAMP_NTZ,
+
+    PRIMARY KEY (DOCUMENT_ID)
+);
+
+ /*============================================================
+   DOCUMENT_EXTRACTIONS TABLE  
+   ============================================================ */ 
+   CREATE OR REPLACE TABLE DOCUMENT_EXTRACTIONS
+(
+    EXTRACTION_ID         VARCHAR DEFAULT UUID_STRING(),
+    DOCUMENT_ID           VARCHAR,
+    CLAIM_ID              VARCHAR,
+
+    DOCUMENT_TYPE         VARCHAR,
+    TEMPLATE_ID           VARCHAR,
+    RELATIVE_PATH         VARCHAR,
+
+    EXTRACTION_RESULT     OBJECT,
+    EXTRACTED_RESPONSE    OBJECT,
+    EXTRACTION_SCORING    OBJECT,
+    EXTRACTION_ERROR      OBJECT,
+
+    EXTRACTION_STATUS     VARCHAR,
+    EXTRACTED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+
+    PRIMARY KEY (EXTRACTION_ID)
+);
+
+ /*============================================================
+   CLAIM_VALIDATION_RESULTS TABLE  
+   ============================================================ */ 
+
+CREATE OR REPLACE TABLE CLAIM_VALIDATION_RESULTS
+(
+    VALIDATION_ID         VARCHAR DEFAULT UUID_STRING(),
+    CLAIM_ID              VARCHAR,
+
+    VALIDATION_CATEGORY   VARCHAR,
+    VALIDATION_NAME       VARCHAR,
+    VALIDATION_STATUS     VARCHAR,
+
+    EXPECTED_VALUE        VARCHAR,
+    ACTUAL_VALUE          VARCHAR,
+    VALIDATION_MESSAGE    VARCHAR,
+
+    SEVERITY              VARCHAR,
+    REQUIRES_REVIEW       BOOLEAN,
+
+    SOURCE_DOCUMENTS      ARRAY,
+    VALIDATED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+
+    PRIMARY KEY (VALIDATION_ID)
+);
