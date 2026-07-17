@@ -1,5 +1,0 @@
-select extracted_response
-from HEALTHCARE_CLAIMS_AI_DB.
-CLAIMS.
-DOCUMENT_EXTRACTIONS
-;

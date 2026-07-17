@@ -1,0 +1,18 @@
+definition_version: 2
+entities:
+  streamlit_app:
+    type: streamlit
+    identifier:
+      database: HEALTHCARE_CLAIMS_AI_DB
+      schema: CLAIMS
+      name: CLAIMS_REVIEW
+    title: CLAIMS_REVIEW
+    query_warehouse: HEALTHCARE_CLAIMS_AI_WH
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    run_mode: SpcsOnly
+    execute_as: OWNER
+    main_file: streamlit_app.py
+    artifacts:
+      - pyproject.toml
+      - streamlit_app.py
+      - .streamlit/config.toml
