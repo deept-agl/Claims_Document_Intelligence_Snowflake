@@ -1,13 +1,12 @@
 import io
 import json
 import re
-import uuid
-from datetime import datetime
-from typing import Optional
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 from snowflake.snowpark.context import get_active_session
+
 
 # ============================================================
 # CONFIGURATION
@@ -18,11 +17,30 @@ session = get_active_session()
 DATABASE = "HEALTHCARE_CLAIMS_AI_DB"
 SCHEMA = "CLAIMS"
 
-STAGE = ("@HEALTHCARE_CLAIMS_AI_DB.CLAIMS.CLAIM_DOCUMENT_STAGE")
+STAGE = (
+    "@HEALTHCARE_CLAIMS_AI_DB."
+    "CLAIMS."
+    "CLAIM_DOCUMENT_STAGE"
+)
 
-PATIENT_CLAIMS_TABLE = ("HEALTHCARE_CLAIMS_AI_DB.CLAIMS.PATIENT_CLAIMS")
-CLAIM_DOCUMENTS_TABLE = ("HEALTHCARE_CLAIMS_AI_DB.CLAIMS.CLAIM_DOCUMENTS")
-VALIDATION_TABLE = ("HEALTHCARE_CLAIMS_AI_DB.CLAIMS.CLAIM_VALIDATION_RESULTS")
+PATIENT_CLAIMS_TABLE = (
+    "HEALTHCARE_CLAIMS_AI_DB."
+    "CLAIMS."
+    "PATIENT_CLAIMS"
+)
+
+CLAIM_DOCUMENTS_TABLE = (
+    "HEALTHCARE_CLAIMS_AI_DB."
+    "CLAIMS."
+    "CLAIM_DOCUMENTS"
+)
+
+VALIDATION_TABLE = (
+    "HEALTHCARE_CLAIMS_AI_DB."
+    "CLAIMS."
+    "CLAIM_VALIDATION_RESULTS"
+)
+
 
 st.set_page_config(
     page_title="Claims Review Workbench",
@@ -30,33 +48,52 @@ st.set_page_config(
     layout="wide",
 )
 
+
 # ============================================================
-# HELPERS
+# HELPER FUNCTIONS
 # ============================================================
 
 def sanitize_name(value: str) -> str:
+    """
+    Convert user input into a safe stage-folder or file name.
+    """
+
     cleaned = re.sub(
         r"[^A-Za-z0-9._-]+",
         "_",
         value.strip(),
     )
+
     return cleaned.strip("._-")
 
 
-def escape_sql(value: str) -> str:
-    return value.replace("'", "''")
+def escape_sql(value: Any) -> str:
+    """
+    Escape apostrophes before placing text inside SQL literals.
+    """
+
+    return str(value).replace("'", "''")
 
 
 def run_query(query: str) -> pd.DataFrame:
+    """
+    Run a Snowflake query and return a pandas DataFrame.
+    """
+
     return session.sql(query).to_pandas()
 
 
 def upload_to_stage(
-    uploaded_file,
+    uploaded_file: Any,
     folder_name: str,
 ) -> None:
+    """
+    Upload one document into the claim-specific stage folder.
+    """
 
-    safe_file_name = sanitize_name(uploaded_file.name)
+    safe_file_name = sanitize_name(
+        uploaded_file.name
+    )
 
     stage_path = (
         f"{STAGE}/"
@@ -64,7 +101,9 @@ def upload_to_stage(
         f"{safe_file_name}"
     )
 
-    file_stream = io.BytesIO(uploaded_file.getvalue())
+    file_stream = io.BytesIO(
+        uploaded_file.getvalue()
+    )
 
     session.file.put_stream(
         input_stream=file_stream,
@@ -75,6 +114,9 @@ def upload_to_stage(
 
 
 def get_claims() -> pd.DataFrame:
+    """
+    Load all patient claims.
+    """
 
     return run_query(
         f"""
@@ -95,9 +137,13 @@ def get_claims() -> pd.DataFrame:
         """
     )
 
+
 def get_claim_documents(
     claim_id: str,
 ) -> pd.DataFrame:
+    """
+    Load claim documents and generate browser-accessible links.
+    """
 
     safe_claim_id = escape_sql(claim_id)
 
@@ -132,7 +178,8 @@ def get_claim_documents(
                 WHEN 'DIAGNOSTIC_REPORT' THEN 6
                 WHEN 'PAYMENT_RECEIPT' THEN 7
                 ELSE 8
-            END
+            END,
+            D.FILE_NAME
         """
     )
 
@@ -140,6 +187,9 @@ def get_claim_documents(
 def get_claim_validations(
     claim_id: str,
 ) -> pd.DataFrame:
+    """
+    Load validation results for one claim.
+    """
 
     safe_claim_id = escape_sql(claim_id)
 
@@ -170,20 +220,60 @@ def get_claim_validations(
     )
 
 
-def get_status_icon(status: str) -> str:
+def update_reviewer_decision(
+    claim_id: str,
+    decision: str,
+    comments: str,
+) -> None:
+    """
+    Save reviewer decision and comments.
+    """
+
+    safe_claim_id = escape_sql(claim_id)
+    safe_decision = escape_sql(decision)
+    safe_comments = escape_sql(comments)
+
+    session.sql(
+        f"""
+        UPDATE {PATIENT_CLAIMS_TABLE}
+        SET
+            REVIEWER_DECISION = '{safe_decision}',
+            REVIEWER_COMMENTS = '{safe_comments}',
+            CLAIM_STATUS = '{safe_decision}',
+            REVIEWED_AT = CURRENT_TIMESTAMP()
+        WHERE CLAIM_ID = '{safe_claim_id}'
+        """
+    ).collect()
+
+
+def get_status_icon(status: Any) -> str:
+    """
+    Return an icon for common workflow statuses.
+    """
 
     status_map = {
         "PASSED": "✅",
-        "WARNING": "⚠️",
-        "FAILED": "❌",
+        "SUCCESS": "✅",
+        "EXTRACTED": "✅",
+        "COMPLETED": "✅",
+        "EXTRACTION_COMPLETED": "✅",
         "READY_FOR_APPROVAL": "✅",
-        "FINANCIAL_REVIEW_REQUIRED": "💰",
-        "MEDICAL_REVIEW_REQUIRED": "🩺",
+        "APPROVED": "✅",
+
+        "WARNING": "⚠️",
         "MANUAL_REVIEW_REQUIRED": "🔍",
         "MORE_INFORMATION_REQUIRED": "📄",
-        "APPROVED": "✅",
+
+        "FAILED": "❌",
         "REJECTED": "❌",
+        "EXTRACTION_FAILED": "❌",
+        "FINANCIAL_REVIEW_REQUIRED": "💰",
+        "MEDICAL_REVIEW_REQUIRED": "🩺",
+
         "PROCESSING": "⏳",
+        "EXTRACTING": "⏳",
+        "UPLOADED": "📤",
+        "PENDING": "⏳",
     }
 
     return status_map.get(
@@ -193,17 +283,26 @@ def get_status_icon(status: str) -> str:
 
 
 def parse_source_documents(
-    value,
+    value: Any,
 ) -> list[str]:
+    """
+    Convert Snowflake ARRAY or JSON text into a Python list.
+    """
 
     if value is None:
         return []
 
     if isinstance(value, list):
-        return [str(item) for item in value]
+        return [
+            str(item)
+            for item in value
+        ]
 
     if isinstance(value, tuple):
-        return [str(item) for item in value]
+        return [
+            str(item)
+            for item in value
+        ]
 
     value_text = str(value)
 
@@ -226,81 +325,132 @@ def parse_source_documents(
     ]
 
 
-def update_reviewer_decision(
-    claim_id: str,
-    decision: str,
-    comments: str,
-) -> None:
+def format_actual_value(
+    value: Any,
+) -> str:
+    """
+    Pretty-format JSON validation values when possible.
+    """
 
-    safe_claim_id = escape_sql(claim_id)
-    safe_decision = escape_sql(decision)
-    safe_comments = escape_sql(comments)
+    if value is None:
+        return "Not available"
 
-    session.sql(
-        f"""
-        UPDATE {PATIENT_CLAIMS_TABLE}
-        SET
-            REVIEWER_DECISION = '{safe_decision}',
-            REVIEWER_COMMENTS = '{safe_comments}',
-            CLAIM_STATUS = '{safe_decision}',
-            REVIEWED_AT = CURRENT_TIMESTAMP()
-        WHERE CLAIM_ID = '{safe_claim_id}'
-        """
-    ).collect()
+    value_text = str(value)
+
+    try:
+        parsed = json.loads(value_text)
+
+        return json.dumps(
+            parsed,
+            indent=2,
+            default=str,
+        )
+
+    except Exception:
+        return value_text
+
+
+def go_to_review_page() -> None:
+    """
+    Move to the review page after document submission.
+    """
+
+    st.session_state["active_page"] = "Review Claims"
 
 
 # ============================================================
-# HEADER
+# PAGE HEADER
 # ============================================================
 
 st.title("🏥 Claims Review Workbench")
 
 st.caption(
     "Submit healthcare claim documents, review automated checks, "
-    "inspect supporting documents, and record the final claim decision."
-)
-
-
-tab_upload, tab_review = st.tabs(
-    [
-        "📤 Submit Claim Documents",
-        "📋 Review Claims",
-    ]
+    "inspect supporting evidence, and record the final claim decision."
 )
 
 
 # ============================================================
-# TAB 1: CLAIM DOCUMENT UPLOAD
+# PERSISTENT PAGE NAVIGATION
 # ============================================================
 
-with tab_upload:
+if "active_page" not in st.session_state:
+    st.session_state["active_page"] = "Review Claims"
 
-    st.subheader("Submit claim documents")
+
+active_page = st.radio(
+    "Navigation",
+    options=[
+        "Submit Claim Documents",
+        "Review Claims",
+    ],
+    key="active_page",
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+
+st.markdown("---")
+
+
+# ============================================================
+# PAGE 1: SUBMIT CLAIM DOCUMENTS
+# ============================================================
+
+if active_page == "Submit Claim Documents":
+
+    st.subheader("📤 Submit claim documents")
 
     st.write(
         "Upload all documents related to one healthcare claim. "
-        "The documents will be processed automatically after submission."
+        "The patient name and claim reference will be combined to "
+        "create the claim folder."
     )
 
-    col1, col2 = st.columns(2)
+    input_col1, input_col2 = st.columns(2)
 
-    with col1:
+    with input_col1:
 
         patient_name = st.text_input(
             "Patient name",
             placeholder="Example: Gregorio366 Auer97",
+            key="upload_patient_name",
         )
 
-    with col2:
+    with input_col2:
 
         claim_reference = st.text_input(
             "Claim reference",
             placeholder="Example: f5dcd418",
+            key="upload_claim_reference",
             help=(
-                "Use a unique patient, policy, or submission reference. "
-                "A reference will be generated when left blank."
+                "Enter a unique policy, patient, or submission reference."
             ),
         )
+
+
+    # --------------------------------------------------------
+    # Folder preview
+    # --------------------------------------------------------
+
+    if (
+        patient_name.strip()
+        and claim_reference.strip()
+    ):
+
+        folder_preview = (
+            f"{sanitize_name(patient_name)}_"
+            f"{sanitize_name(claim_reference)}"
+        )
+
+        st.info(
+            f"Stage folder: `{folder_preview}`"
+        )
+
+
+    # --------------------------------------------------------
+    # File upload
+    # --------------------------------------------------------
 
     uploaded_files = st.file_uploader(
         "Upload supporting documents",
@@ -311,12 +461,14 @@ with tab_upload:
             "jpeg",
         ],
         accept_multiple_files=True,
+        key="claim_document_uploader",
         help=(
-            "Upload the claim form and all available supporting documents, "
-            "such as prescriptions, invoices, discharge summaries, "
-            "diagnostic reports, and payment receipts."
+            "Upload the claim form and supporting documents such as "
+            "prescriptions, invoices, discharge summaries, diagnostic "
+            "reports, and payment receipts."
         ),
     )
+
 
     if uploaded_files:
 
@@ -363,12 +515,19 @@ with tab_upload:
                 "Ensure one filename contains both 'claim' and 'form'."
             )
 
+
+    # --------------------------------------------------------
+    # Submit claim
+    # --------------------------------------------------------
+
     submitted = st.button(
         "Submit Claim",
         type="primary",
         use_container_width=True,
         disabled=not uploaded_files,
+        key="submit_claim_button",
     )
+
 
     if submitted:
 
@@ -376,6 +535,12 @@ with tab_upload:
 
             st.error(
                 "Enter the patient name."
+            )
+
+        elif not claim_reference.strip():
+
+            st.error(
+                "Enter the claim reference."
             )
 
         elif not uploaded_files:
@@ -413,25 +578,28 @@ with tab_upload:
                     claim_reference
                 )
 
-                if not safe_reference:
-
-                    safe_reference = uuid.uuid4().hex[:8]
-
-                folder_name = (f"{safe_patient_name}_"f"{safe_reference}"
+                folder_name = (
+                    f"{safe_patient_name}_"
+                    f"{safe_reference}"
                 )
 
                 progress = st.progress(0)
-                message = st.empty()
+
+                upload_message = st.empty()
 
                 try:
+
+                    total_files = len(
+                        uploaded_files
+                    )
 
                     for index, file in enumerate(
                         uploaded_files,
                         start=1,
                     ):
 
-                        message.info(
-                            f"Uploading {file.name}"
+                        upload_message.info(
+                            f"Uploading {file.name}..."
                         )
 
                         upload_to_stage(
@@ -442,24 +610,33 @@ with tab_upload:
                         progress.progress(
                             int(
                                 index
-                                / len(uploaded_files)
+                                / total_files
                                 * 100
                             )
                         )
 
-                    message.empty()
+                    upload_message.empty()
 
                     st.success(
                         "Claim documents submitted successfully."
                     )
 
                     st.info(
-                        "The claim will appear in the review queue "
-                        "after automated extraction and validation complete."
+                        "Automated extraction and validation will begin. "
+                        "The claim will appear in the review queue after "
+                        "processing is complete."
                     )
 
                     st.markdown(
                         f"**Submission reference:** `{folder_name}`"
+                    )
+
+                    st.button(
+                        "Go to Claims Review",
+                        type="primary",
+                        use_container_width=True,
+                        key="go_to_review_after_upload",
+                        on_click=go_to_review_page,
                     )
 
                 except Exception as exc:
@@ -470,26 +647,32 @@ with tab_upload:
 
 
 # ============================================================
-# TAB 2: CLAIM REVIEW
+# PAGE 2: REVIEW CLAIMS
 # ============================================================
 
-with tab_review:
+elif active_page == "Review Claims":
 
-    top_col1, top_col2 = st.columns(
+    review_header_col, refresh_col = st.columns(
         [5, 1]
     )
 
-    with top_col1:
+    with review_header_col:
 
-        st.subheader("Claims review queue")
+        st.subheader("📋 Claims review queue")
 
-    with top_col2:
+    with refresh_col:
 
         if st.button(
             "Refresh",
             use_container_width=True,
+            key="refresh_claim_review",
         ):
             st.rerun()
+
+
+    # --------------------------------------------------------
+    # Load claims
+    # --------------------------------------------------------
 
     try:
 
@@ -503,6 +686,7 @@ with tab_review:
             f"Unable to load claims: {exc}"
         )
 
+
     if claims_df.empty:
 
         st.info(
@@ -510,6 +694,10 @@ with tab_review:
         )
 
     else:
+
+        # ----------------------------------------------------
+        # Filters
+        # ----------------------------------------------------
 
         filter_col1, filter_col2 = st.columns(2)
 
@@ -520,12 +708,17 @@ with tab_review:
             ] + sorted(
                 claims_df[
                     "CLAIM_STATUS"
-                ].dropna().unique().tolist()
+                ]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
             )
 
             selected_status = st.selectbox(
                 "Filter by claim status",
-                status_options,
+                options=status_options,
+                key="review_status_filter",
             )
 
         with filter_col2:
@@ -533,45 +726,51 @@ with tab_review:
             search_text = st.text_input(
                 "Search by claim, patient, or policy",
                 placeholder="Enter search text",
+                key="review_claim_search",
             )
 
+
         filtered_claims = claims_df.copy()
+
 
         if selected_status != "All":
 
             filtered_claims = filtered_claims[
-                filtered_claims["CLAIM_STATUS"]
+                filtered_claims[
+                    "CLAIM_STATUS"
+                ].astype(str)
                 == selected_status
             ]
 
+
         if search_text.strip():
 
-            search_value = search_text.lower()
+            search_value = (
+                search_text
+                .strip()
+                .lower()
+            )
 
             filtered_claims = filtered_claims[
-                filtered_claims.astype(str)
+                filtered_claims
+                .astype(str)
                 .apply(
-                    lambda row: row.str.lower()
-                    .str.contains(
-                        search_value,
-                        na=False,
-                    )
-                    .any(),
+                    lambda row: (
+                        row
+                        .str.lower()
+                        .str.contains(
+                            search_value,
+                            regex=False,
+                            na=False,
+                        )
+                        .any()
+                    ),
                     axis=1,
                 )
             ]
 
-        claim_labels = {
-            (
-                f"{get_status_icon(row['CLAIM_STATUS'])} "
-                f"{row['CLAIM_ID']} | "
-                f"{row['PATIENT_NAME']} | "
-                f"{row['CLAIM_STATUS']}"
-            ): row["CLAIM_ID"]
-            for _, row in filtered_claims.iterrows()
-        }
 
-        if not claim_labels:
+        if filtered_claims.empty:
 
             st.info(
                 "No claims match the selected filters."
@@ -579,438 +778,758 @@ with tab_review:
 
         else:
 
-            selected_label = st.selectbox(
-                "Select claim",
-                list(claim_labels.keys()),
+            # ------------------------------------------------
+            # Persistent claim selector
+            # ------------------------------------------------
+
+            claim_ids = (
+                filtered_claims[
+                    "CLAIM_ID"
+                ]
+                .astype(str)
+                .tolist()
             )
 
-            selected_claim_id = claim_labels[
-                selected_label
+            claim_display_map = {
+                str(row["CLAIM_ID"]): (
+                    f"{get_status_icon(row['CLAIM_STATUS'])} "
+                    f"{row['CLAIM_ID']} | "
+                    f"{row['PATIENT_NAME']} | "
+                    f"{row['CLAIM_STATUS']}"
+                )
+                for _, row in filtered_claims.iterrows()
+            }
+
+
+            if (
+                "selected_review_claim_id"
+                not in st.session_state
+            ):
+
+                st.session_state[
+                    "selected_review_claim_id"
+                ] = claim_ids[0]
+
+
+            if (
+                st.session_state[
+                    "selected_review_claim_id"
+                ]
+                not in claim_ids
+            ):
+
+                st.session_state[
+                    "selected_review_claim_id"
+                ] = claim_ids[0]
+
+
+            selected_claim_id = st.selectbox(
+                "Select claim",
+                options=claim_ids,
+                format_func=lambda claim_id: (
+                    claim_display_map.get(
+                        claim_id,
+                        claim_id,
+                    )
+                ),
+                key="selected_review_claim_id",
+            )
+
+
+            claim_rows = claims_df[
+                claims_df[
+                    "CLAIM_ID"
+                ].astype(str)
+                == str(selected_claim_id)
             ]
 
-            claim = claims_df[
-                claims_df["CLAIM_ID"]
-                == selected_claim_id
-            ].iloc[0]
 
-            st.markdown("---")
+            if claim_rows.empty:
 
-            summary_col1, summary_col2, summary_col3, summary_col4 = (
-                st.columns(4)
-            )
-
-            summary_col1.metric(
-                "Claim ID",
-                claim["CLAIM_ID"],
-            )
-
-            summary_col2.metric(
-                "Patient",
-                claim["PATIENT_NAME"],
-            )
-
-            amount = claim["CLAIMED_AMOUNT"]
-
-            summary_col3.metric(
-                "Claimed Amount",
-                (
-                    f"₹{amount:,.2f}"
-                    if pd.notna(amount)
-                    else "Not available"
-                ),
-            )
-
-            summary_col4.metric(
-                "Current Status",
-                (
-                    f"{get_status_icon(claim['CLAIM_STATUS'])} "
-                    f"{claim['CLAIM_STATUS']}"
-                ),
-            )
-
-            details_col1, details_col2 = st.columns(2)
-
-            with details_col1:
-
-                st.markdown(
-                    f"**Patient ID:** {claim['PATIENT_ID']}"
+                st.warning(
+                    "The selected claim is no longer available."
                 )
 
-                st.markdown(
-                    f"**Policy Number:** {claim['POLICY_NUMBER']}"
+            else:
+
+                claim = claim_rows.iloc[0]
+
+                st.markdown("---")
+
+
+                # --------------------------------------------
+                # Claim summary
+                # --------------------------------------------
+
+                summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+                
+                with summary_col1:
+                    st.markdown("**Claim ID**")
+                    st.write(claim["CLAIM_ID"])
+                
+                with summary_col2:
+                    st.markdown("**Patient**")
+                    st.write(claim["PATIENT_NAME"])
+                
+                with summary_col3:
+                    st.markdown("**Claimed Amount**")
+                    amount = claim["CLAIMED_AMOUNT"]
+                
+                    st.write(
+                        f"₹{amount:,.2f}"
+                        if pd.notna(amount)
+                        else "Not available"
+                    )
+                
+                with summary_col4:
+                    st.markdown("**Current Status**")
+                    st.write(claim["CLAIM_STATUS"])
+                    #     # f"{get_status_icon(claim['CLAIM_STATUS'])} "
+                    #     f"{claim['CLAIM_STATUS']}"
+                    # )
+
+                details_col1, details_col2 = (
+                    st.columns(2)
                 )
 
-            with details_col2:
 
-                st.markdown(
-                    f"**Claim Type:** {claim['CLAIM_TYPE']}"
-                )
+                with details_col1:
 
-                st.markdown(
-                    f"**Submitted On:** {claim['CREATED_AT']}"
-                )
-
-            try:
-
-                documents_df = get_claim_documents(
-                    selected_claim_id
-                )
-
-                validations_df = get_claim_validations(
-                    selected_claim_id
-                )
-
-            except Exception as exc:
-
-                documents_df = pd.DataFrame()
-                validations_df = pd.DataFrame()
-
-                st.error(
-                    f"Unable to load claim review details: {exc}"
-                )
-
-            review_tab1, review_tab2, review_tab3 = st.tabs(
-                [
-                    "Validation Summary",
-                    "Supporting Documents",
-                    "Reviewer Decision",
-                ]
-            )
-
-
-            # ==================================================
-            # VALIDATION SUMMARY
-            # ==================================================
-
-            with review_tab1:
-
-                if validations_df.empty:
-
-                    st.info(
-                        "Validation results are not yet available."
+                    st.markdown(
+                        f"**Patient ID:** "
+                        f"{claim['PATIENT_ID']}"
                     )
 
-                else:
-
-                    detail_validations = validations_df[
-                        validations_df[
-                            "VALIDATION_CATEGORY"
-                        ] != "CLAIM_DECISION"
-                    ].copy()
-
-                    passed = int(
-                        (
-                            detail_validations[
-                                "VALIDATION_STATUS"
-                            ] == "PASSED"
-                        ).sum()
+                    st.markdown(
+                        f"**Patient Name:** "
+                        f"{claim['PATIENT_NAME']}"
                     )
 
-                    warnings = int(
-                        (
-                            detail_validations[
-                                "VALIDATION_STATUS"
-                            ] == "WARNING"
-                        ).sum()
+                    st.markdown(
+                        f"**Policy Number:** "
+                        f"{claim['POLICY_NUMBER']}"
                     )
 
-                    failed = int(
-                        (
-                            detail_validations[
-                                "VALIDATION_STATUS"
-                            ] == "FAILED"
-                        ).sum()
+
+                with details_col2:
+
+                    st.markdown(
+                        f"**Claim Type:** "
+                        f"{claim['CLAIM_TYPE']}"
                     )
 
-                    col1, col2, col3 = st.columns(3)
-
-                    col1.metric(
-                        "Passed Checks",
-                        passed,
+                    st.markdown(
+                        f"**Submitted On:** "
+                        f"{claim['CREATED_AT']}"
                     )
 
-                    col2.metric(
-                        "Warnings",
-                        warnings,
-                    )
-
-                    col3.metric(
-                        "Failed Checks",
-                        failed,
-                    )
-
-                    issue_validations = detail_validations[
-                        detail_validations[
-                            "VALIDATION_STATUS"
-                        ].isin(
-                            [
-                                "FAILED",
-                                "WARNING",
-                            ]
-                        )
+                    reviewed_at = claim[
+                        "REVIEWED_AT"
                     ]
 
-                    if issue_validations.empty:
+                    st.markdown(
+                        f"**Reviewed On:** "
+                        f"{reviewed_at if pd.notna(reviewed_at) else 'Pending'}"
+                    )
 
-                        st.success(
-                            "No validation issues were identified."
+
+                # --------------------------------------------
+                # Load documents and validations
+                # --------------------------------------------
+
+                try:
+
+                    documents_df = (
+                        get_claim_documents(
+                            selected_claim_id
+                        )
+                    )
+
+                    validations_df = (
+                        get_claim_validations(
+                            selected_claim_id
+                        )
+                    )
+
+                except Exception as exc:
+
+                    documents_df = pd.DataFrame()
+                    validations_df = pd.DataFrame()
+
+                    st.error(
+                        "Unable to load claim review details: "
+                        f"{exc}"
+                    )
+
+
+                (
+                    review_tab1,
+                    review_tab2,
+                    review_tab3,
+                ) = st.tabs(
+                    [
+                        "Validation Summary",
+                        "Supporting Documents",
+                        "Reviewer Decision",
+                    ]
+                )
+
+
+                # ============================================
+                # VALIDATION SUMMARY
+                # ============================================
+
+                with review_tab1:
+
+                    if validations_df.empty:
+
+                        st.info(
+                            "Validation results are not yet available."
                         )
 
                     else:
 
-                        st.markdown(
-                            "#### Items requiring attention"
+                        detail_validations = (
+                            validations_df[
+                                validations_df[
+                                    "VALIDATION_CATEGORY"
+                                ] != "CLAIM_DECISION"
+                            ]
+                            .copy()
                         )
 
-                        for _, validation in (
-                            issue_validations.iterrows()
-                        ):
 
-                            validation_status = validation[
-                                "VALIDATION_STATUS"
+                        passed_count = int(
+                            (
+                                detail_validations[
+                                    "VALIDATION_STATUS"
+                                ]
+                                == "PASSED"
+                            ).sum()
+                        )
+
+
+                        warning_count = int(
+                            (
+                                detail_validations[
+                                    "VALIDATION_STATUS"
+                                ]
+                                == "WARNING"
+                            ).sum()
+                        )
+
+
+                        failed_count = int(
+                            (
+                                detail_validations[
+                                    "VALIDATION_STATUS"
+                                ]
+                                == "FAILED"
+                            ).sum()
+                        )
+
+
+                        (
+                            metric_col1,
+                            metric_col2,
+                            metric_col3,
+                        ) = st.columns(3)
+
+
+                        metric_col1.metric(
+                            "Passed Checks",
+                            passed_count,
+                        )
+
+                        metric_col2.metric(
+                            "Warnings",
+                            warning_count,
+                        )
+
+                        metric_col3.metric(
+                            "Failed Checks",
+                            failed_count,
+                        )
+
+
+                        issue_validations = (
+                            detail_validations[
+                                detail_validations[
+                                    "VALIDATION_STATUS"
+                                ].isin(
+                                    [
+                                        "FAILED",
+                                        "WARNING",
+                                    ]
+                                )
                             ]
+                        )
 
-                            with st.expander(
-                                (
-                                    f"{get_status_icon(validation_status)} "
-                                    f"{validation['VALIDATION_NAME']} — "
-                                    f"{validation_status}"
-                                ),
-                                expanded=True,
+
+                        if issue_validations.empty:
+
+                            st.success(
+                                "No validation issues were identified."
+                            )
+
+                        else:
+
+                            st.markdown(
+                                "#### Items requiring attention"
+                            )
+
+
+                            for _, validation in (
+                                issue_validations.iterrows()
                             ):
 
-                                st.write(
+                                validation_status = (
                                     validation[
-                                        "VALIDATION_MESSAGE"
+                                        "VALIDATION_STATUS"
                                     ]
                                 )
 
-                                info_col1, info_col2 = (
-                                    st.columns(2)
-                                )
 
-                                info_col1.markdown(
-                                    f"**Severity:** "
-                                    f"{validation['SEVERITY']}"
-                                )
-
-                                info_col2.markdown(
-                                    f"**Category:** "
-                                    f"{validation['VALIDATION_CATEGORY']}"
-                                )
-
-                                st.markdown(
-                                    "**Expected**"
-                                )
-
-                                st.write(
-                                    validation[
-                                        "EXPECTED_VALUE"
-                                    ]
-                                )
-
-                                st.markdown(
-                                    "**Actual**"
-                                )
-
-                                st.code(
-                                    str(
-                                        validation[
-                                            "ACTUAL_VALUE"
-                                        ]
+                                with st.expander(
+                                    (
+                                        f"{get_status_icon(validation_status)} "
+                                        f"{validation['VALIDATION_NAME']} — "
+                                        f"{validation_status}"
                                     ),
-                                    language="json",
-                                )
-
-                                source_document_types = (
-                                    parse_source_documents(
-                                        validation[
-                                            "SOURCE_DOCUMENTS"
-                                        ]
-                                    )
-                                )
-
-                                if (
-                                    source_document_types
-                                    and not documents_df.empty
+                                    expanded=True,
                                 ):
 
-                                    related_documents = (
-                                        documents_df[
-                                            documents_df[
-                                                "DOCUMENT_TYPE"
-                                            ].isin(
-                                                source_document_types
-                                            )
-                                        ][
-                                            [
-                                                "FILE_NAME",
-                                                "DOCUMENT_TYPE",
-                                                "DOCUMENT_URL",
-                                            ]
+                                    st.write(
+                                        validation[
+                                            "VALIDATION_MESSAGE"
                                         ]
                                     )
 
-                                    if not related_documents.empty:
 
-                                        st.markdown(
-                                            "**Documents related to this check**"
+                                    issue_col1, issue_col2 = (
+                                        st.columns(2)
+                                    )
+
+
+                                    issue_col1.markdown(
+                                        f"**Severity:** "
+                                        f"{validation['SEVERITY']}"
+                                    )
+
+
+                                    issue_col2.markdown(
+                                        f"**Category:** "
+                                        f"{validation['VALIDATION_CATEGORY']}"
+                                    )
+
+
+                                    st.markdown(
+                                        "**Expected result**"
+                                    )
+
+                                    st.write(
+                                        validation[
+                                            "EXPECTED_VALUE"
+                                        ]
+                                    )
+
+
+                                    st.markdown(
+                                        "**Actual result**"
+                                    )
+
+                                    st.code(
+                                        format_actual_value(
+                                            validation[
+                                                "ACTUAL_VALUE"
+                                            ]
+                                        ),
+                                        language="json",
+                                    )
+
+
+                                    source_document_types = (
+                                        parse_source_documents(
+                                            validation[
+                                                "SOURCE_DOCUMENTS"
+                                            ]
+                                        )
+                                    )
+
+
+                                    if (
+                                        source_document_types
+                                        and not documents_df.empty
+                                    ):
+
+                                        related_documents = (
+                                            documents_df[
+                                                documents_df[
+                                                    "DOCUMENT_TYPE"
+                                                ].isin(
+                                                    source_document_types
+                                                )
+                                            ][
+                                                [
+                                                    "FILE_NAME",
+                                                    "DOCUMENT_TYPE",
+                                                    "DOCUMENT_URL",
+                                                ]
+                                            ]
+                                            .copy()
                                         )
 
-                                        st.dataframe(
-                                            related_documents,
-                                            use_container_width=True,
-                                            hide_index=True,
-                                            column_config={
-                                                "DOCUMENT_URL":
-                                                    st.column_config.LinkColumn(
-                                                        "Open Document",
-                                                        display_text="View document",
-                                                    )
-                                            },
-                                        )
+
+                                        if not related_documents.empty:
+
+                                            st.markdown(
+                                                "**Documents related "
+                                                "to this validation**"
+                                            )
+
+                                            st.dataframe(
+                                                related_documents,
+                                                use_container_width=True,
+                                                hide_index=True,
+                                                column_config={
+                                                    "FILE_NAME":
+                                                        st.column_config.TextColumn(
+                                                            "Document"
+                                                        ),
+
+                                                    "DOCUMENT_TYPE":
+                                                        st.column_config.TextColumn(
+                                                            "Document Type"
+                                                        ),
+
+                                                    "DOCUMENT_URL":
+                                                        st.column_config.LinkColumn(
+                                                            "Open Document",
+                                                            display_text=(
+                                                                "View document"
+                                                            ),
+                                                        ),
+                                                },
+                                            )
 
 
-            # ==================================================
-            # SUPPORTING DOCUMENTS
-            # ==================================================
+                        st.markdown(
+                            "#### All validation checks"
+                        )
 
-            with review_tab2:
 
-                st.markdown(
-                    "#### Submitted claim documents"
-                )
+                        validation_display = (
+                            detail_validations[
+                                [
+                                    "VALIDATION_NAME",
+                                    "VALIDATION_STATUS",
+                                    "SEVERITY",
+                                    "VALIDATION_MESSAGE",
+                                    "REQUIRES_REVIEW",
+                                ]
+                            ]
+                            .copy()
+                        )
 
-                if documents_df.empty:
 
-                    st.info(
-                        "No supporting documents are available."
+                        validation_display[
+                            "STATUS"
+                        ] = validation_display[
+                            "VALIDATION_STATUS"
+                        ].apply(
+                            lambda value: (
+                                f"{get_status_icon(value)} "
+                                f"{value}"
+                            )
+                        )
+
+
+                        st.dataframe(
+                            validation_display[
+                                [
+                                    "VALIDATION_NAME",
+                                    "STATUS",
+                                    "SEVERITY",
+                                    "VALIDATION_MESSAGE",
+                                    "REQUIRES_REVIEW",
+                                ]
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "VALIDATION_NAME":
+                                    st.column_config.TextColumn(
+                                        "Validation Check"
+                                    ),
+
+                                "STATUS":
+                                    st.column_config.TextColumn(
+                                        "Status"
+                                    ),
+
+                                "SEVERITY":
+                                    st.column_config.TextColumn(
+                                        "Severity"
+                                    ),
+
+                                "VALIDATION_MESSAGE":
+                                    st.column_config.TextColumn(
+                                        "Validation Result"
+                                    ),
+
+                                "REQUIRES_REVIEW":
+                                    st.column_config.CheckboxColumn(
+                                        "Requires Review"
+                                    ),
+                            },
+                        )
+
+
+                # ============================================
+                # SUPPORTING DOCUMENTS
+                # ============================================
+
+                with review_tab2:
+
+                    st.markdown(
+                        "#### Submitted claim documents"
                     )
 
-                else:
 
-                    document_display = documents_df[
-                        [
-                            "FILE_NAME",
-                            "DOCUMENT_TYPE",
-                            "PROCESSING_STATUS",
-                            "DOCUMENT_URL",
-                        ]
-                    ].copy()
+                    if documents_df.empty:
 
-                    st.dataframe(
-                        document_display,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "FILE_NAME":
-                                st.column_config.TextColumn(
-                                    "Document"
-                                ),
+                        st.info(
+                            "No supporting documents are available."
+                        )
 
-                            "DOCUMENT_TYPE":
-                                st.column_config.TextColumn(
-                                    "Document Type"
-                                ),
+                    else:
 
-                            "PROCESSING_STATUS":
-                                st.column_config.TextColumn(
-                                    "Processing Status"
-                                ),
+                        document_display = (
+                            documents_df[
+                                [
+                                    "FILE_NAME",
+                                    "DOCUMENT_TYPE",
+                                    "PROCESSING_STATUS",
+                                    "ERROR_MESSAGE",
+                                    "DOCUMENT_URL",
+                                ]
+                            ]
+                            .copy()
+                        )
 
-                            "DOCUMENT_URL":
-                                st.column_config.LinkColumn(
-                                    "Document Link",
-                                    display_text="Open document",
-                                ),
-                        },
+
+                        document_display[
+                            "STATUS"
+                        ] = document_display[
+                            "PROCESSING_STATUS"
+                        ].apply(
+                            lambda value: (
+                                f"{get_status_icon(value)} "
+                                f"{value}"
+                            )
+                        )
+
+
+                        st.dataframe(
+                            document_display[
+                                [
+                                    "FILE_NAME",
+                                    "DOCUMENT_TYPE",
+                                    "STATUS",
+                                    "ERROR_MESSAGE",
+                                    "DOCUMENT_URL",
+                                ]
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "FILE_NAME":
+                                    st.column_config.TextColumn(
+                                        "Document"
+                                    ),
+
+                                "DOCUMENT_TYPE":
+                                    st.column_config.TextColumn(
+                                        "Document Type"
+                                    ),
+
+                                "STATUS":
+                                    st.column_config.TextColumn(
+                                        "Processing Status"
+                                    ),
+
+                                "ERROR_MESSAGE":
+                                    st.column_config.TextColumn(
+                                        "Processing Issue"
+                                    ),
+
+                                "DOCUMENT_URL":
+                                    st.column_config.LinkColumn(
+                                        "Document Link",
+                                        display_text=(
+                                            "Open document"
+                                        ),
+                                    ),
+                            },
+                        )
+
+
+                # ============================================
+                # REVIEWER DECISION
+                # ============================================
+
+                with review_tab3:
+
+                    st.markdown(
+                        "#### Record reviewer decision"
                     )
 
 
-            # ==================================================
-            # REVIEWER DECISION
-            # ==================================================
-
-            with review_tab3:
-
-                st.markdown(
-                    "#### Record reviewer decision"
-                )
-
-                current_decision = (
-                    claim["REVIEWER_DECISION"]
-                    if pd.notna(
-                        claim["REVIEWER_DECISION"]
+                    current_decision = (
+                        str(
+                            claim[
+                                "REVIEWER_DECISION"
+                            ]
+                        )
+                        if pd.notna(
+                            claim[
+                                "REVIEWER_DECISION"
+                            ]
+                        )
+                        else "PENDING"
                     )
-                    else "PENDING"
-                )
 
-                current_comments = (
-                    claim["REVIEWER_COMMENTS"]
-                    if pd.notna(
-                        claim["REVIEWER_COMMENTS"]
+
+                    current_comments = (
+                        str(
+                            claim[
+                                "REVIEWER_COMMENTS"
+                            ]
+                        )
+                        if pd.notna(
+                            claim[
+                                "REVIEWER_COMMENTS"
+                            ]
+                        )
+                        else ""
                     )
-                    else ""
-                )
 
-                st.markdown(
-                    f"**Current decision:** {current_decision}"
-                )
 
-                decision = st.selectbox(
-                    "Decision",
-                    [
+                    st.markdown(
+                        f"**Current decision:** "
+                        f"{get_status_icon(current_decision)} "
+                        f"{current_decision}"
+                    )
+
+
+                    decision_options = [
+                        "PENDING",
                         "APPROVED",
                         "REJECTED",
                         "MORE_INFORMATION_REQUIRED",
                         "MEDICAL_REVIEW_REQUIRED",
                         "FINANCIAL_REVIEW_REQUIRED",
-                    ],
-                    index=0,
-                )
+                    ]
 
-                comments = st.text_area(
-                    "Reviewer comments",
-                    value=current_comments,
-                    placeholder=(
-                        "Add the reason for the decision, "
-                        "documents reviewed, and any follow-up required."
-                    ),
-                    height=150,
-                )
 
-                submit_decision = st.button(
-                    "Save Reviewer Decision",
-                    type="primary",
-                    use_container_width=True,
-                )
+                    decision_key = (
+                        f"decision_"
+                        f"{selected_claim_id}"
+                    )
 
-                if submit_decision:
 
-                    if not comments.strip():
+                    comments_key = (
+                        f"comments_"
+                        f"{selected_claim_id}"
+                    )
 
-                        st.error(
-                            "Add reviewer comments before saving the decision."
-                        )
 
-                    else:
+                    if decision_key not in st.session_state:
 
-                        try:
+                        if current_decision in decision_options:
 
-                            update_reviewer_decision(
-                                claim_id=selected_claim_id,
-                                decision=decision,
-                                comments=comments,
-                            )
+                            st.session_state[
+                                decision_key
+                            ] = current_decision
 
-                            st.success(
-                                "Reviewer decision saved successfully."
-                            )
+                        else:
 
-                            st.rerun()
+                            st.session_state[
+                                decision_key
+                            ] = "PENDING"
 
-                        except Exception as exc:
+
+                    if comments_key not in st.session_state:
+
+                        st.session_state[
+                            comments_key
+                        ] = current_comments
+
+
+                    decision = st.selectbox(
+                        "Decision",
+                        options=decision_options,
+                        key=decision_key,
+                    )
+
+
+                    comments = st.text_area(
+                        "Reviewer comments",
+                        placeholder=(
+                            "Add the reason for the decision, "
+                            "documents reviewed, and any required "
+                            "follow-up."
+                        ),
+                        height=160,
+                        key=comments_key,
+                    )
+
+
+                    submit_decision = st.button(
+                        "Save Reviewer Decision",
+                        type="primary",
+                        use_container_width=True,
+                        key=(
+                            f"save_decision_"
+                            f"{selected_claim_id}"
+                        ),
+                    )
+
+
+                    if submit_decision:
+
+                        if decision == "PENDING":
 
                             st.error(
-                                f"Unable to save decision: {exc}"
+                                "Select a final reviewer decision."
                             )
+
+                        elif not comments.strip():
+
+                            st.error(
+                                "Add reviewer comments before "
+                                "saving the decision."
+                            )
+
+                        else:
+
+                            try:
+
+                                update_reviewer_decision(
+                                    claim_id=selected_claim_id,
+                                    decision=decision,
+                                    comments=comments,
+                                )
+
+                                st.success(
+                                    "Reviewer decision saved successfully."
+                                )
+
+                                st.rerun()
+
+                            except Exception as exc:
+
+                                st.error(
+                                    "Unable to save reviewer "
+                                    f"decision: {exc}"
+                                )

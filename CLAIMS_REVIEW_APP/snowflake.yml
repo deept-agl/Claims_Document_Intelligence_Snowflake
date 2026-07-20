@@ -4,9 +4,9 @@ entities:
     type: streamlit
     identifier:
       database: HEALTHCARE_CLAIMS_AI_DB
-      schema: CLAIMS
+      schema: APP
       name: CLAIMS_REVIEW
-    title: CLAIMS_REVIEW
+    title: CLAIMS_REVIEW_APP
     query_warehouse: HEALTHCARE_CLAIMS_AI_WH
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
     run_mode: SpcsOnly

@@ -465,7 +465,7 @@ SELECT
     $$);
 
  /*============================================================
-   PROMPT TEMPLATE - PHARMACY INVOICE 
+   PROMPT TEMPLATE - DIAGNOSTIC REPORT
    ============================================================ */ 
 
    INSERT INTO PROMPT_TEMPLATES
