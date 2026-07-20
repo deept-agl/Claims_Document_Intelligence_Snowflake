@@ -7,6 +7,16 @@ The solution allows claims reviewers to upload patient claim documents through a
 ![CProject Intro](docs/claims_project_image.png)
 
 ---
+## Source Dataset
+
+CSV dataset was downloaded using this link
+https://synthetichealth.github.io/synthea/
+
+Later converted the csv files to documents per patient using below github repo code.
+
+Github Link: https://github.com/deept-agl/Generate_Patient_Claims_pdf_via_csvfiles
+
+---
 
 ## Use Case
 
