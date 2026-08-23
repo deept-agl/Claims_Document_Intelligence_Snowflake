@@ -755,3 +755,11 @@ $$;
 CALL HEALTHCARE_CLAIMS_AI_DB.CLAIMS.LOAD_PATIENT_CLAIM_FOLDER(
     'Gregorio366_Auer97_f5dcd418'
 );
+
+--Jacinto644_Kris249_72c0b9ce
+
+
+--Test if it processes your files.
+CALL HEALTHCARE_CLAIMS_AI_DB.CLAIMS.LOAD_PATIENT_CLAIM_FOLDER(
+    'Jacinto644_Kris249_72c0b9ce'
+);
